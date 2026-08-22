@@ -1,11 +1,19 @@
-import { config, configStatus } from '@/lib/config';
+import { headers } from 'next/headers';
+import { CopyField } from './CopyField';
+import { config, configStatus, publicBaseUrl } from '@/lib/config';
 import { activeTools } from '@/lib/mcp/server';
 
 export const dynamic = 'force-dynamic';
 
-export default function Home() {
+export default async function Home() {
   const status = configStatus();
   const merchant = config.merchant.name || 'This merchant';
+
+  // Derived from the live request, so the address shown is the one this deployment
+  // is actually reachable at rather than anything written down at build time.
+  const baseUrl = publicBaseUrl(await headers());
+  const mcpUrl = `${baseUrl}/api/mcp`;
+  const discoveryUrl = `${baseUrl}/.well-known/agent-commerce.json`;
 
   return (
     <main className="wrap">
@@ -34,10 +42,12 @@ export default function Home() {
       <div className="card">
         <dl className="kv">
           <dt>MCP endpoint</dt>
-          <dd className="mono">/api/mcp</dd>
+          <dd className="mono">
+            <CopyField value={mcpUrl} label="MCP endpoint URL" />
+          </dd>
           <dt>Discovery</dt>
           <dd className="mono">
-            <a href="/.well-known/agent-commerce.json">/.well-known/agent-commerce.json</a>
+            <CopyField value={discoveryUrl} label="discovery document URL" />
           </dd>
           <dt>Audit trail</dt>
           <dd>

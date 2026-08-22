@@ -262,18 +262,48 @@ export function configStatus() {
   };
 }
 
-/** Resolves the public base URL, preferring explicit config over request headers. */
-export function publicBaseUrl(req?: Request): string {
+/** A proxy may forward several values; the first one is the client-facing one. */
+function firstValue(header: string | null): string | undefined {
+  const value = header?.split(',')[0]?.trim();
+  return value || undefined;
+}
+
+/**
+ * Resolves the public base URL of this deployment.
+ *
+ * Order matters. An explicit PARLEY_PUBLIC_URL is the merchant's stated intent and
+ * always wins. Otherwise the live request wins, because it is the only source that
+ * describes the address actually being used right now: on a Vercel preview,
+ * VERCEL_PROJECT_PRODUCTION_URL names the production domain, which is not the host
+ * the visitor is looking at. The VERCEL_* values remain the fallback for contexts
+ * that have no request at all.
+ *
+ * Accepts a Request (route handlers) or Headers (server components).
+ */
+export function publicBaseUrl(source?: Request | Headers): string {
   if (config.server.publicUrl) return config.server.publicUrl.replace(/\/+$/, '');
+
+  if (source) {
+    const headers = source instanceof Headers ? source : source.headers;
+    const requestUrl = source instanceof Headers ? undefined : new URL(source.url);
+
+    const host =
+      firstValue(headers.get('x-forwarded-host')) ??
+      firstValue(headers.get('host')) ??
+      requestUrl?.host;
+
+    if (host) {
+      const proto =
+        firstValue(headers.get('x-forwarded-proto')) ??
+        requestUrl?.protocol.replace(':', '') ??
+        (/^(localhost|127\.0\.0\.1|\[::1\])(:|$)/.test(host) ? 'http' : 'https');
+      return `${proto}://${host}`;
+    }
+  }
+
   if (process.env.VERCEL_PROJECT_PRODUCTION_URL) {
     return `https://${process.env.VERCEL_PROJECT_PRODUCTION_URL}`;
   }
   if (process.env.VERCEL_URL) return `https://${process.env.VERCEL_URL}`;
-  if (req) {
-    const url = new URL(req.url);
-    const host = req.headers.get('x-forwarded-host') ?? url.host;
-    const proto = req.headers.get('x-forwarded-proto') ?? url.protocol.replace(':', '');
-    return `${proto}://${host}`;
-  }
   return 'http://localhost:3000';
 }
