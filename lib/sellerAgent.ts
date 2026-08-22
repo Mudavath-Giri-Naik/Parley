@@ -1,4 +1,12 @@
-import Anthropic from '@anthropic-ai/sdk';
+import {
+  AgentNotConfiguredError,
+  MAX_TOOL_ROUNDS,
+  agentAvailable,
+  selectProvider,
+  type Conversation,
+  type ToolInvocation,
+  type ToolOutcome,
+} from './agentProviders';
 import { auditLog } from './auditLog';
 import { config } from './config';
 import { formatMoney } from './money';
@@ -13,17 +21,12 @@ import { ToolError, type ToolDefinition } from './tools/types';
  * exactly the same limits. Note what is *not* here: the discount cap is not enforced
  * in this prompt. It is enforced in create_order_and_pay, in code. Everything below
  * is guidance for a well-behaved agent, never the safeguard.
+ *
+ * Which model does the reasoning is a deployment detail (see agentProviders.ts).
+ * Tool execution and auditing live here, once, so no provider can drift from the rules.
  */
 
-export class AgentNotConfiguredError extends Error {
-  constructor() {
-    super(
-      'ANTHROPIC_API_KEY is not set, so the hosted seller agent is disabled. ' +
-        'The MCP tools still work: a buyer agent can connect and transact without it.',
-    );
-    this.name = 'AgentNotConfiguredError';
-  }
-}
+export { AgentNotConfiguredError };
 
 const CATALOG_SNAPSHOT_TTL_MS = 60_000;
 let catalogSnapshot: { text: string; at: number } | null = null;
@@ -89,21 +92,42 @@ export async function buildSystemPrompt(): Promise<string> {
   ].join('\n');
 }
 
-function toAnthropicTools(available: ToolDefinition[]): Anthropic.Tool[] {
-  return available.map((tool) => ({
-    name: tool.name,
-    description: tool.description,
-    input_schema: tool.inputSchema as Anthropic.Tool['input_schema'],
-  }));
-}
-
 export interface SellerTurn {
   reply: string;
   toolCalls: { name: string; input: unknown; ok: boolean }[];
-  messages: Anthropic.MessageParam[];
+  /** Provider-specific conversation state. Pass it back verbatim to continue the thread. */
+  messages: Conversation;
+  provider: string;
+  model: string;
 }
 
-const MAX_TOOL_ROUNDS = 8;
+/**
+ * Executes one tool on the seller agent's behalf. Every provider routes through
+ * this, so a refusal, a failure, and an audit entry look the same on all of them.
+ */
+async function executeTool(
+  available: ToolDefinition[],
+  call: ToolInvocation,
+): Promise<ToolOutcome> {
+  const definition = available.find((tool) => tool.name === call.name);
+  if (!definition) {
+    return { ok: false, content: `No tool named "${call.name}" exists.` };
+  }
+  try {
+    const output = await definition.handler(call.input, { actor: 'seller_agent' });
+    return { ok: true, content: JSON.stringify(output) };
+  } catch (err) {
+    const message = err instanceof ToolError || err instanceof Error ? err.message : String(err);
+    await auditLog({
+      actor: 'seller_agent',
+      action: call.name,
+      result: 'failed',
+      reasoning: `The seller agent called ${call.name} and it failed: ${message}`,
+      details: { input: call.input },
+    });
+    return { ok: false, content: message };
+  }
+}
 
 /**
  * Runs one turn of the seller agent: reason, call tools, reason again, answer.
@@ -111,114 +135,64 @@ const MAX_TOOL_ROUNDS = 8;
  */
 export async function runSellerAgent(
   input: string,
-  history: Anthropic.MessageParam[] = [],
+  history: Conversation = [],
 ): Promise<SellerTurn> {
-  if (!config.agent.anthropicApiKey) throw new AgentNotConfiguredError();
+  if (!agentAvailable()) throw new AgentNotConfiguredError();
 
-  const client = new Anthropic({ apiKey: config.agent.anthropicApiKey });
+  const provider = selectProvider();
   const system = await buildSystemPrompt();
   const available = tools;
-  const messages: Anthropic.MessageParam[] = [...history, { role: 'user', content: input }];
-  const toolCalls: SellerTurn['toolCalls'] = [];
 
-  for (let round = 0; round < MAX_TOOL_ROUNDS; round += 1) {
-    const response = await client.messages.create({
-      model: config.agent.model,
-      max_tokens: 16000,
-      thinking: { type: 'adaptive' },
-      system,
-      tools: toAnthropicTools(available),
-      messages,
+  const turn = await provider.runTurn({
+    system,
+    tools: available,
+    input,
+    history,
+    execute: (call) => executeTool(available, call),
+  });
+
+  if (turn.exhausted) {
+    await auditLog({
+      actor: 'seller_agent',
+      action: 'reply',
+      result: 'failed',
+      reasoning: `The seller agent used ${MAX_TOOL_ROUNDS} rounds of tools without reaching an answer, so the turn was stopped to avoid looping.`,
+      details: {
+        tools_used: turn.toolCalls.map((call) => call.name),
+        provider: provider.name,
+        model: provider.model,
+      },
     });
-
-    // Append the whole content array: thinking blocks must survive the round trip.
-    messages.push({ role: 'assistant', content: response.content });
-
-    if (response.stop_reason !== 'tool_use') {
-      const reply = response.content
-        .filter((block): block is Anthropic.TextBlock => block.type === 'text')
-        .map((block) => block.text)
-        .join('\n')
-        .trim();
-
-      await auditLog({
-        actor: 'seller_agent',
-        action: 'reply',
-        result: response.stop_reason === 'refusal' ? 'blocked' : 'success',
-        reasoning:
-          response.stop_reason === 'refusal'
-            ? 'The seller agent declined to answer this request.'
-            : `The seller agent answered the customer after ${toolCalls.length} tool call${toolCalls.length === 1 ? '' : 's'}: ${reply.slice(0, 400)}`,
-        details: { tools_used: toolCalls.map((call) => call.name), stop_reason: response.stop_reason },
-      });
-
-      return { reply: reply || 'No reply was produced.', toolCalls, messages };
-    }
-
-    const toolUses = response.content.filter(
-      (block): block is Anthropic.ToolUseBlock => block.type === 'tool_use',
-    );
-
-    const results = await Promise.all(
-      toolUses.map(async (use): Promise<Anthropic.ToolResultBlockParam> => {
-        const definition = available.find((tool) => tool.name === use.name);
-        if (!definition) {
-          toolCalls.push({ name: use.name, input: use.input, ok: false });
-          return {
-            type: 'tool_result',
-            tool_use_id: use.id,
-            is_error: true,
-            content: `No tool named "${use.name}" exists.`,
-          };
-        }
-        try {
-          const output = await definition.handler(
-            (use.input ?? {}) as Record<string, unknown>,
-            { actor: 'seller_agent' },
-          );
-          toolCalls.push({ name: use.name, input: use.input, ok: true });
-          return {
-            type: 'tool_result',
-            tool_use_id: use.id,
-            content: JSON.stringify(output),
-          };
-        } catch (err) {
-          toolCalls.push({ name: use.name, input: use.input, ok: false });
-          const message = err instanceof ToolError || err instanceof Error ? err.message : String(err);
-          await auditLog({
-            actor: 'seller_agent',
-            action: use.name,
-            result: 'failed',
-            reasoning: `The seller agent called ${use.name} and it failed: ${message}`,
-            details: { input: use.input },
-          });
-          return {
-            type: 'tool_result',
-            tool_use_id: use.id,
-            is_error: true,
-            content: message,
-          };
-        }
-      }),
-    );
-
-    // All tool results for one assistant turn go back in a single user message.
-    messages.push({ role: 'user', content: results });
+    return {
+      reply:
+        'I could not finish working that out. Could you narrow down what you are after, and I will try again?',
+      toolCalls: turn.toolCalls,
+      messages: turn.messages,
+      provider: provider.name,
+      model: provider.model,
+    };
   }
 
   await auditLog({
     actor: 'seller_agent',
     action: 'reply',
-    result: 'failed',
-    reasoning: `The seller agent used ${MAX_TOOL_ROUNDS} rounds of tools without reaching an answer, so the turn was stopped to avoid looping.`,
-    details: { tools_used: toolCalls.map((call) => call.name) },
+    result: turn.reply ? 'success' : 'blocked',
+    reasoning: turn.reply
+      ? `The seller agent answered the customer after ${turn.toolCalls.length} tool call${turn.toolCalls.length === 1 ? '' : 's'}: ${turn.reply.slice(0, 400)}`
+      : 'The seller agent produced no answer for this request.',
+    details: {
+      tools_used: turn.toolCalls.map((call) => call.name),
+      provider: provider.name,
+      model: provider.model,
+    },
   });
 
   return {
-    reply:
-      'I could not finish working that out. Could you narrow down what you are after, and I will try again?',
-    toolCalls,
-    messages,
+    reply: turn.reply || 'No reply was produced.',
+    toolCalls: turn.toolCalls,
+    messages: turn.messages,
+    provider: provider.name,
+    model: provider.model,
   };
 }
 

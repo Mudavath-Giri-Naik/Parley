@@ -8,6 +8,9 @@
 
 export type PriceUnit = 'major' | 'minor';
 
+/** Which model provider reasons for the seller agent. `auto` picks whichever key is set. */
+export type AgentProviderChoice = 'auto' | 'anthropic' | 'gemini';
+
 /**
  * The canonical product fields Parley speaks. FIELD_MAP maps these onto whatever
  * the merchant's own API happens to call them.
@@ -45,8 +48,11 @@ export interface ParleyConfig {
   agent: {
     persona: string;
     maxDiscountPercent: number;
+    provider: AgentProviderChoice;
     model: string;
     anthropicApiKey?: string;
+    geminiModel: string;
+    geminiApiKey?: string;
   };
   payments: {
     razorpayKeyId?: string;
@@ -159,6 +165,15 @@ function parsePriceUnit(): PriceUnit {
   return raw;
 }
 
+function parseAgentProvider(): AgentProviderChoice {
+  const raw = optional('AGENT_PROVIDER', 'auto').toLowerCase();
+  if (raw !== 'auto' && raw !== 'anthropic' && raw !== 'gemini') {
+    issues.push('AGENT_PROVIDER must be "auto", "anthropic", or "gemini".');
+    return 'auto';
+  }
+  return raw;
+}
+
 function parseOutOfStockPattern(): RegExp {
   const raw = optional(
     'OUT_OF_STOCK_PATTERN',
@@ -202,8 +217,11 @@ export const config: ParleyConfig = {
   agent: {
     persona: optional('AGENT_PERSONA', 'Friendly, concise, never pushy'),
     maxDiscountPercent: numberIn('MAX_DISCOUNT_PERCENT', 10, 0, 100),
+    provider: parseAgentProvider(),
     model: optional('AGENT_MODEL', 'claude-opus-5'),
     anthropicApiKey: optional('ANTHROPIC_API_KEY') || undefined,
+    geminiModel: optional('GEMINI_MODEL', 'gemini-3.7-flash'),
+    geminiApiKey: optional('GEMINI_API_KEY') || undefined,
   },
   payments: {
     razorpayKeyId: razorpayKeyId || undefined,
@@ -240,7 +258,7 @@ export function configStatus() {
     issues,
     paymentsEnabled: config.payments.enabled,
     databaseEnabled: config.db.enabled,
-    agentEnabled: Boolean(config.agent.anthropicApiKey),
+    agentEnabled: Boolean(config.agent.anthropicApiKey || config.agent.geminiApiKey),
   };
 }
 

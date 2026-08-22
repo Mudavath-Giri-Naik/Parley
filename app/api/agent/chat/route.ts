@@ -1,4 +1,4 @@
-import type Anthropic from '@anthropic-ai/sdk';
+import type { Conversation } from '@/lib/agentProviders';
 import { AgentNotConfiguredError, runSellerAgent } from '@/lib/sellerAgent';
 import { authorize } from '@/lib/mcp/server';
 import { configIssues } from '@/lib/config';
@@ -38,12 +38,14 @@ export async function POST(req: Request): Promise<Response> {
     return Response.json({ error: '"message" is required.' }, { status: 400 });
   }
 
-  const history = Array.isArray(body.messages) ? (body.messages as Anthropic.MessageParam[]) : [];
+  const history = Array.isArray(body.messages) ? (body.messages as Conversation) : [];
 
   try {
     const turn = await runSellerAgent(message, history);
     return Response.json({
       reply: turn.reply,
+      provider: turn.provider,
+      model: turn.model,
       tools_used: turn.toolCalls.map((call) => ({ name: call.name, ok: call.ok })),
       messages: turn.messages,
     });

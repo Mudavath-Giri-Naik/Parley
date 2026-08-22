@@ -24,6 +24,8 @@ const SOURCE_EXTENSIONS = new Set(['.ts', '.tsx', '.js', '.jsx', '.mjs', '.css',
 /** Hosts that belong to shared infrastructure, not to any one merchant. */
 const ALLOWED_HOSTS = [
   'api.razorpay.com',
+  'generativelanguage.googleapis.com',
+  'ai.google.dev',
   'localhost',
   '127.0.0.1',
   'example.com',

@@ -1,3 +1,4 @@
+import { agentAvailable } from '../agentProviders';
 import { config, configIssues, publicBaseUrl } from '../config';
 import { negotiateTool } from '../sellerAgent';
 import { tools as baseTools } from '../tools';
@@ -40,7 +41,7 @@ export const ErrorCode = {
 
 /** The seller agent is only offered when this deployment has a key for it. */
 export function activeTools(): ToolDefinition[] {
-  return config.agent.anthropicApiKey ? [...baseTools, negotiateTool] : [...baseTools];
+  return agentAvailable() ? [...baseTools, negotiateTool] : [...baseTools];
 }
 
 function result(id: JsonRpcRequest['id'], value: unknown): JsonRpcResponse {

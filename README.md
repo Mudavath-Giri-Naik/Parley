@@ -8,7 +8,7 @@ A self-hostable template that turns any merchant's existing e-commerce APIs into
 
 [![Deploy with Vercel](https://vercel.com/button)](https://vercel.com/new/clone?repository-url=https%3A%2F%2Fgithub.com%2FMudavath-Giri-Naik%2FParley&env=MERCHANT_NAME,MERCHANT_SEARCH_API,MERCHANT_STOCK_API,MERCHANT_ORDER_API,RAZORPAY_KEY_ID,RAZORPAY_KEY_SECRET,PARLEY_DB_URL,MAX_DISCOUNT_PERCENT,AGENT_PERSONA,SPEND_CAP_DEFAULT&envDescription=Point%20Parley%20at%20your%20own%20storefront%20APIs%20and%20payment%20keys&envLink=https%3A%2F%2Fgithub.com%2FMudavath-Giri-Naik%2FParley%23environment-variables)
 
-`Next.js` · `MCP over Streamable HTTP` · `Postgres` · `Razorpay` · `MIT`
+`Next.js` · `MCP over Streamable HTTP` · `Postgres` · `Razorpay` · `Claude or Gemini` · `MIT`
 
 </div>
 
@@ -130,8 +130,11 @@ Without `PARLEY_DB_URL`, Parley still runs: decisions go to the server log, and 
 
 | Variable | What it is |
 |---|---|
-| `ANTHROPIC_API_KEY` | Enables the conversational seller agent and the `negotiate_with_seller` tool. Without it, the other tools all still work — a buyer agent can browse and transact, it just can't haggle with anyone. |
-| `AGENT_MODEL` | Model for the seller agent. Defaults to `claude-opus-5`. |
+| `ANTHROPIC_API_KEY` / `GEMINI_API_KEY` | Either one enables the conversational seller agent and the `negotiate_with_seller` tool. Without a provider key the other tools all still work — a buyer agent can browse and transact, it just can't haggle with anyone. Set whichever you already pay for; you don't need both. |
+| `AGENT_PROVIDER` | `auto` (default), `anthropic`, or `gemini`. `auto` uses whichever key is set, preferring Anthropic if both are. |
+| `AGENT_MODEL` | Anthropic model. Defaults to `claude-opus-5`. |
+| `GEMINI_MODEL` | Gemini model. Defaults to `gemini-3.7-flash`. |
+| `GEMINI_MAX_ATTEMPTS` | How many times to retry a Gemini call that fails because the model is busy. Defaults to `4`. |
 | `PARLEY_PUBLIC_URL` | Public URL of the deployment. Auto-detected on Vercel; set it if you use a custom domain. |
 | `PARLEY_API_KEY` | Set to require `Authorization: Bearer <token>` on the MCP endpoint. Unset leaves it open to any agent that finds it. |
 | `PAYMENT_CALLBACK_URL` | Where Razorpay returns the customer after payment. |
@@ -181,7 +184,21 @@ Parley treats that as a normal answer, not a crash: it logs `result: 'blocked'`,
 | `create_order_and_pay` | Prices from your live catalog, clamps the discount, asks your API to reserve stock, then either charges an existing mandate or returns a payment link for a human to approve. |
 | `check_order_status` | Reads order status from your system, which stays the source of truth. |
 | `get_audit_trail` | The record of what happened and why — readable by the buyer agent too, so a customer's own agent can ask "what did you just do?" |
-| `negotiate_with_seller` | Talk to your seller agent in plain language. Only present when `ANTHROPIC_API_KEY` is set. |
+| `negotiate_with_seller` | Talk to your seller agent in plain language. Only present when a model provider key is set. |
+
+## Choosing a model provider
+
+The seller agent's reasoning runs on either **Anthropic** or **Google Gemini**. Providers live behind one interface in `lib/agentProviders.ts` and translate protocol only — tool execution, the audit trail, and every limit stay in `sellerAgent.ts`, so the safeguards cannot drift apart between backends.
+
+```bash
+AGENT_PROVIDER=gemini
+GEMINI_API_KEY=...            # modern AQ... keys work natively
+GEMINI_MODEL=gemini-3.7-flash
+```
+
+Gemini support uses `@google/genai`, the current unified SDK. The legacy `google-generative-ai` packages mishandle newer `AQ...` keys by treating them as OAuth tokens, which is why Parley does not use them. Tool schemas are passed through `parametersJsonSchema`, so Parley's tool definitions are handed over as-is with no lossy translation, and model turns are echoed back verbatim to preserve Gemini 3.x thought signatures across tool calls.
+
+**Watch the free-tier quota.** `gemini-3.7-flash` allows only 20 requests per day on the free tier, and a single negotiation can spend several. `gemini-3.5-flash-lite` is more forgiving while you're testing. Busy-model errors (`503`, per-minute `429`) are retried with exponential backoff; a daily quota is not, since it won't recover in the time anyone is willing to wait.
 
 ## Connecting an AI agent
 
@@ -230,6 +247,7 @@ app/
   .well-known/agent-commerce.json/route.ts  discovery, generated from config
 lib/
   config.ts                               every env var, read and validated once
+  agentProviders.ts                       Anthropic / Gemini behind one interface
   merchantApi.ts                          the seam: envelopes, field mapping, normalization
   db.ts / auditLog.ts                     Parley's own Postgres and the shared logger
   razorpay.ts                             payment links on the merchant's own account
