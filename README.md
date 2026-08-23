@@ -54,6 +54,7 @@
   <img alt="PRs welcome" src="https://img.shields.io/badge/PRs-welcome-6EA8FE?style=flat-square">
 </p>
 
+<a href="#before-you-start">Before you start</a> ·
 <b><a href="#quickstart">Quickstart</a></b> ·
 <a href="#architecture">Architecture</a> ·
 <a href="#how-a-purchase-happens">How a purchase happens</a> ·
@@ -167,6 +168,32 @@ sequenceDiagram
 ```
 
 ---
+
+## Before you start
+
+**Parley does not run your store. It talks to the store you already have.**
+
+Almost every business online today already has a website, and behind that website
+are real APIs — the same endpoints your own site calls to list products, check
+stock and place orders. Parley plugs into those. This is the one hard requirement.
+
+**You need three HTTP endpoints:**
+
+| Endpoint | What it must do | Example |
+|---|---|---|
+| **Search products** | Return your catalog, so the agent can find items | `GET /api/products` |
+| **Get one product** | Return a single product with its live stock | `GET /api/products/:id` |
+| **Create an order** | Reserve the stock and return an order id | `POST /api/orders` |
+
+One more is optional: an order-status endpoint. Leave it unset and Parley reuses
+your order API.
+
+Field names and JSON shape are up to you — you map them in config, not in code,
+so no existing endpoint has to be rewritten to fit Parley.
+
+> **If you do not have these APIs yet, Parley has nothing to connect to.**
+> It never scrapes your website and never reads your database directly. Expose
+> the three endpoints first, then come back to the steps below.
 
 ## Quickstart
 
