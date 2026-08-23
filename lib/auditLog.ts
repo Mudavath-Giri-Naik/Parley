@@ -1,5 +1,6 @@
 import { config } from './config';
 import { query } from './db';
+import { redactDeep, scrubSecrets } from './redact';
 
 /**
  * The shared logging function every tool calls. One row per decision, always with a
@@ -41,23 +42,6 @@ interface AuditRow extends Record<string, unknown> {
   details: Record<string, unknown> | null;
 }
 
-/** Strips anything that should never reach the audit trail. */
-const SECRET_KEY_PATTERN = /(secret|password|authorization|api[-_]?key|token)/i;
-
-function redact(details: Record<string, unknown>): Record<string, unknown> {
-  const clean: Record<string, unknown> = {};
-  for (const [key, value] of Object.entries(details)) {
-    if (SECRET_KEY_PATTERN.test(key)) {
-      clean[key] = '[redacted]';
-    } else if (value && typeof value === 'object' && !Array.isArray(value)) {
-      clean[key] = redact(value as Record<string, unknown>);
-    } else {
-      clean[key] = value;
-    }
-  }
-  return clean;
-}
-
 /**
  * Writes one audit entry. Logging must never be the reason a sale fails, so a
  * database problem is reported to the console and swallowed.
@@ -70,17 +54,17 @@ export async function auditLog(entry: AuditEntryInput): Promise<void> {
   }
   try {
     await query(
-      `INSERT INTO audit_log (actor, action, result, reasoning, customer_ref, amount_minor, currency, details)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+      `INSERT INTO audit_log (merchant_id, actor, action, result, reasoning, customer_ref, amount_minor, currency, details)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
       [
         entry.actor,
         entry.action,
         entry.result,
-        entry.reasoning,
+        scrubSecrets(entry.reasoning),
         entry.customerRef ?? null,
         entry.amountMinor ?? null,
         entry.currency ?? config.merchant.currency,
-        JSON.stringify(redact(entry.details ?? {})),
+        JSON.stringify(redactDeep(entry.details ?? {})),
       ],
     );
   } catch (err) {
@@ -92,10 +76,15 @@ export async function readAuditTrail(limit = 50, customerRef?: string): Promise<
   const capped = Math.min(Math.max(Math.trunc(limit) || 50, 1), 500);
   const rows = customerRef
     ? await query<AuditRow>(
-        `SELECT * FROM audit_log WHERE customer_ref = $1 ORDER BY id DESC LIMIT $2`,
+        `SELECT * FROM audit_log
+          WHERE merchant_id = $1 AND customer_ref = $2
+          ORDER BY id DESC LIMIT $3`,
         [customerRef, capped],
       )
-    : await query<AuditRow>(`SELECT * FROM audit_log ORDER BY id DESC LIMIT $1`, [capped]);
+    : await query<AuditRow>(
+        `SELECT * FROM audit_log WHERE merchant_id = $1 ORDER BY id DESC LIMIT $2`,
+        [capped],
+      );
 
   return rows.map((row) => ({
     id: String(row.id),

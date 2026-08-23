@@ -25,7 +25,6 @@ export interface Mandate {
   remaining_minor: number;
   currency: string;
   status: 'active' | 'exhausted' | 'expired' | 'revoked';
-  note: string | null;
   created_at: string;
   expires_at: string | null;
 }
@@ -37,7 +36,6 @@ interface MandateRow extends Record<string, unknown> {
   spent_minor: string;
   currency: string;
   status: string;
-  note: string | null;
   created_at: Date | string;
   expires_at: Date | string | null;
 }
@@ -53,7 +51,6 @@ function toMandate(row: MandateRow): Mandate {
     remaining_minor: Math.max(0, cap - spent),
     currency: row.currency,
     status: row.status as Mandate['status'],
-    note: row.note,
     created_at: new Date(row.created_at).toISOString(),
     expires_at: row.expires_at ? new Date(row.expires_at).toISOString() : null,
   };
@@ -68,10 +65,12 @@ export async function getActiveMandate(customerRef: string): Promise<Mandate | n
   requireDatabase();
   await query(
     `UPDATE mandates SET status = 'expired'
-      WHERE status = 'active' AND expires_at IS NOT NULL AND expires_at <= now()`,
+      WHERE merchant_id = $1
+        AND status = 'active' AND expires_at IS NOT NULL AND expires_at <= now()`,
   );
   const rows = await query<MandateRow>(
-    `SELECT * FROM mandates WHERE customer_ref = $1 AND status = 'active' LIMIT 1`,
+    `SELECT * FROM mandates
+      WHERE merchant_id = $1 AND customer_ref = $2 AND status = 'active' LIMIT 1`,
     [customerRef],
   );
   return rows.length ? toMandate(rows[0]) : null;
@@ -80,7 +79,6 @@ export async function getActiveMandate(customerRef: string): Promise<Mandate | n
 export async function createMandate(input: {
   customerRef: string;
   capMinor?: number;
-  note?: string;
   ttlDays?: number;
 }): Promise<Mandate> {
   requireDatabase();
@@ -99,10 +97,10 @@ export async function createMandate(input: {
 
   const ttlDays = input.ttlDays ?? config.mandates.defaultTtlDays;
   const rows = await query<MandateRow>(
-    `INSERT INTO mandates (customer_ref, cap_minor, currency, note, expires_at)
+    `INSERT INTO mandates (merchant_id, customer_ref, cap_minor, currency, expires_at)
      VALUES ($1, $2, $3, $4, now() + ($5 || ' days')::interval)
      RETURNING *`,
-    [input.customerRef, capMinor, config.merchant.currency, input.note ?? null, String(ttlDays)],
+    [input.customerRef, capMinor, config.merchant.currency, String(ttlDays)],
   );
 
   const mandate = toMandate(rows[0]);
@@ -116,7 +114,7 @@ export async function createMandate(input: {
     customerRef: input.customerRef,
     amountMinor: mandate.cap_minor,
     currency: mandate.currency,
-    details: { mandate_id: mandate.id, ttl_days: ttlDays, note: input.note },
+    details: { mandate_id: mandate.id, ttl_days: ttlDays },
   });
   return mandate;
 }
@@ -138,12 +136,13 @@ export async function spendAgainstMandate(
   requireDatabase();
   const rows = await query<MandateRow>(
     `UPDATE mandates
-        SET spent_minor = spent_minor + $2,
-            status = CASE WHEN spent_minor + $2 >= cap_minor THEN 'exhausted' ELSE status END
-      WHERE customer_ref = $1
+        SET spent_minor = spent_minor + $3,
+            status = CASE WHEN spent_minor + $3 >= cap_minor THEN 'exhausted' ELSE status END
+      WHERE merchant_id = $1
+        AND customer_ref = $2
         AND status = 'active'
         AND (expires_at IS NULL OR expires_at > now())
-        AND spent_minor + $2 <= cap_minor
+        AND spent_minor + $3 <= cap_minor
       RETURNING *`,
     [customerRef, Math.round(amountMinor)],
   );
@@ -168,9 +167,9 @@ export async function refundToMandate(customerRef: string, amountMinor: number):
   if (!config.db.enabled) return;
   await query(
     `UPDATE mandates
-        SET spent_minor = GREATEST(0, spent_minor - $2),
+        SET spent_minor = GREATEST(0, spent_minor - $3),
             status = CASE WHEN status = 'exhausted' THEN 'active' ELSE status END
-      WHERE customer_ref = $1 AND status IN ('active', 'exhausted')`,
+      WHERE merchant_id = $1 AND customer_ref = $2 AND status IN ('active', 'exhausted')`,
     [customerRef, Math.round(amountMinor)],
   );
 }
@@ -232,7 +231,6 @@ export const createMandateTool: ToolDefinition = {
         description:
           'The cap in minor units (paise, cents). Defaults to the merchant\'s SPEND_CAP_DEFAULT.',
       },
-      note: { type: 'string', description: 'What the customer authorized, in their own words.' },
       ttl_days: { type: 'number', description: 'How long the mandate stays valid (default from config).' },
     },
     required: ['customer_ref'],
@@ -242,7 +240,6 @@ export const createMandateTool: ToolDefinition = {
     createMandate({
       customerRef: requireString(args, 'customer_ref'),
       capMinor: optionalNumber(args, 'cap_minor'),
-      note: optionalString(args, 'note'),
       ttlDays: optionalNumber(args, 'ttl_days'),
     }),
 };

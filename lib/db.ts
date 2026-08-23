@@ -1,17 +1,29 @@
-import { Pool } from 'pg';
-import { config } from './config';
+import { Pool, type PoolClient } from 'pg';
+import { config, merchantId } from './config';
 
 /**
- * Parley's own Postgres. This is deliberately separate from the merchant's product
- * and order database: Parley stores only its audit trail and its spend mandates,
- * and every write the merchant cares about goes through the merchant's own API.
+ * Parley's Postgres.
+ *
+ * The database is shared across deployments, so every statement runs inside a
+ * transaction that first declares which merchant it belongs to. Two things then
+ * keep merchants apart, and they are independent of each other:
+ *
+ *   1. Every query in this codebase filters on merchant_id explicitly.
+ *   2. Row Level Security enforces the same filter in the database, against a
+ *      role that cannot bypass it. A missed filter above returns no rows rather
+ *      than another merchant's rows.
+ *
+ * The declaration uses set_config(..., true) rather than SET, because it must be
+ * transaction-local: Supabase's pooler in transaction mode hands each statement to
+ * whichever backend is free, so a session-level SET would not survive to the next
+ * statement — and worse, could leak one merchant's context into another's query.
  */
 
 declare global {
   // eslint-disable-next-line no-var
   var __parleyPool: Pool | undefined;
   // eslint-disable-next-line no-var
-  var __parleySchemaReady: Promise<void> | undefined;
+  var __parleySchemaChecked: Promise<void> | undefined;
 }
 
 export class DatabaseNotConfiguredError extends Error {
@@ -21,6 +33,16 @@ export class DatabaseNotConfiguredError extends Error {
         'Point it at a Postgres instance you control.',
     );
     this.name = 'DatabaseNotConfiguredError';
+  }
+}
+
+export class SchemaMissingError extends Error {
+  constructor(detail: string) {
+    super(
+      `Parley's tables are not reachable (${detail}). Run supabase/0001_shared_schema.sql ` +
+        'against your database, and connect with the parley_app role it creates.',
+    );
+    this.name = 'SchemaMissingError';
   }
 }
 
@@ -67,57 +89,63 @@ export function getPool(): Pool {
   return global.__parleyPool;
 }
 
-const SCHEMA = `
-CREATE TABLE IF NOT EXISTS audit_log (
-  id            BIGSERIAL PRIMARY KEY,
-  created_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
-  actor         TEXT        NOT NULL,
-  action        TEXT        NOT NULL,
-  result        TEXT        NOT NULL,
-  reasoning     TEXT        NOT NULL,
-  customer_ref  TEXT,
-  amount_minor  BIGINT,
-  currency      TEXT,
-  details       JSONB       NOT NULL DEFAULT '{}'::jsonb
-);
-CREATE INDEX IF NOT EXISTS audit_log_created_at_idx ON audit_log (created_at DESC);
-CREATE INDEX IF NOT EXISTS audit_log_customer_ref_idx ON audit_log (customer_ref);
-
-CREATE TABLE IF NOT EXISTS mandates (
-  id             BIGSERIAL PRIMARY KEY,
-  customer_ref   TEXT        NOT NULL,
-  cap_minor      BIGINT      NOT NULL,
-  spent_minor    BIGINT      NOT NULL DEFAULT 0,
-  currency       TEXT        NOT NULL,
-  status         TEXT        NOT NULL DEFAULT 'active',
-  note           TEXT,
-  created_at     TIMESTAMPTZ NOT NULL DEFAULT now(),
-  expires_at     TIMESTAMPTZ
-);
-CREATE UNIQUE INDEX IF NOT EXISTS mandates_active_customer_idx
-  ON mandates (customer_ref) WHERE status = 'active';
-`;
-
-/** Creates the two tables Parley owns, once per process. Safe to call on every request. */
+/**
+ * Confirms the tables exist. The schema itself is owned by the migration, not by
+ * the application: parley_app deliberately has no CREATE privilege, so the app
+ * cannot alter the shape of a database every merchant shares.
+ */
 export function ensureSchema(): Promise<void> {
   if (!config.db.url) throw new DatabaseNotConfiguredError();
-  if (!global.__parleySchemaReady) {
-    global.__parleySchemaReady = getPool()
-      .query(SCHEMA)
+  if (!global.__parleySchemaChecked) {
+    global.__parleySchemaChecked = getPool()
+      .query('SELECT 1 FROM audit_log LIMIT 1')
+      .then(() => getPool().query('SELECT 1 FROM mandates LIMIT 1'))
       .then(() => undefined)
-      .catch((err) => {
-        global.__parleySchemaReady = undefined;
-        throw err;
+      .catch((err: unknown) => {
+        global.__parleySchemaChecked = undefined;
+        throw new SchemaMissingError(err instanceof Error ? err.message : String(err));
       });
   }
-  return global.__parleySchemaReady;
+  return global.__parleySchemaChecked;
 }
 
+/**
+ * Runs work inside one transaction that has declared its merchant. Everything
+ * touching audit_log or mandates goes through here.
+ */
+export async function withMerchantContext<T>(
+  fn: (client: PoolClient, merchant: string) => Promise<T>,
+): Promise<T> {
+  await ensureSchema();
+  const merchant = merchantId();
+  const client = await getPool().connect();
+  try {
+    await client.query('BEGIN');
+    // Parameterized, and transaction-scoped: `SET LOCAL` cannot take a bind
+    // parameter, and a plain `SET` would outlive this transaction on a pooled
+    // connection and contaminate the next merchant to borrow it.
+    await client.query("SELECT set_config('parley.merchant_id', $1, true)", [merchant]);
+    const result = await fn(client, merchant);
+    await client.query('COMMIT');
+    return result;
+  } catch (err) {
+    await client.query('ROLLBACK').catch(() => undefined);
+    throw err;
+  } finally {
+    client.release();
+  }
+}
+
+/**
+ * Runs one statement for the current merchant. `$1` is always the merchant id, so
+ * every query in the codebase can filter on it without threading it through by hand.
+ */
 export async function query<T extends Record<string, unknown>>(
   text: string,
   values: unknown[] = [],
 ): Promise<T[]> {
-  await ensureSchema();
-  const result = await getPool().query(text, values);
-  return result.rows as T[];
+  return withMerchantContext(async (client, merchant) => {
+    const result = await client.query(text, [merchant, ...values]);
+    return result.rows as T[];
+  });
 }

@@ -333,3 +333,26 @@ export function publicBaseUrl(source?: Request | Headers): string {
   if (process.env.VERCEL_URL) return `https://${process.env.VERCEL_URL}`;
   return 'http://localhost:3000';
 }
+
+/**
+ * Identifies this deployment among all the others sharing a database.
+ *
+ * Derived from the deployment's own hostname, so a merchant who deploys their own
+ * copy gets a unique identifier with nothing to configure. MERCHANT_ID overrides it,
+ * which matters when a merchant moves to a custom domain and wants to keep the
+ * history that accumulated under the old hostname.
+ *
+ * Deliberately does not depend on a request: audit writes happen where there is no
+ * request to read, and this value must never differ between two writes from the
+ * same deployment.
+ */
+export function merchantId(): string {
+  const explicit = optional('MERCHANT_ID');
+  if (explicit) return explicit.slice(0, 200);
+
+  try {
+    return new URL(publicBaseUrl()).host.toLowerCase().slice(0, 200);
+  } catch {
+    return 'localhost';
+  }
+}

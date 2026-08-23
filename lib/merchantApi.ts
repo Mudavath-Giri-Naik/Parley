@@ -1,5 +1,6 @@
 import { config, type CanonicalProductField } from './config';
 import { parsePrice, toMinorUnits } from './money';
+import { scrubSecrets } from './redact';
 
 /**
  * The seam between Parley and whatever the merchant already runs.
@@ -324,9 +325,11 @@ export function merchantMessage(payload: unknown, raw: string): string {
   if (isRecord(payload)) {
     for (const key of ['message', 'error', 'reason', 'detail', 'description']) {
       const value = payload[key];
-      if (typeof value === 'string' && value.trim()) return value.trim();
-      if (isRecord(value) && typeof value.message === 'string') return value.message;
+      if (typeof value === 'string' && value.trim()) return scrubSecrets(value.trim());
+      if (isRecord(value) && typeof value.message === 'string') return scrubSecrets(value.message);
     }
   }
-  return raw.slice(0, 300) || 'No message returned.';
+  // Falling back to the raw body is the riskiest path in the codebase: it is
+  // whatever the merchant chose to return. Never hand it on unscrubbed.
+  return scrubSecrets(raw.slice(0, 300)) || 'No message returned.';
 }

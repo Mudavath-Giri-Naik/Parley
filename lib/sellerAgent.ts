@@ -102,6 +102,33 @@ export interface SellerTurn {
 }
 
 /**
+ * Tool arguments are composed by a language model, so their shape is not fixed and
+ * storing them wholesale would put unbounded, model-authored content — including a
+ * customer's real name — into the audit trail. Only these keys are ever recorded.
+ * `customer_name` is deliberately absent.
+ */
+const LOGGABLE_ARGUMENT_KEYS = [
+  'product_id',
+  'order_id',
+  'quantity',
+  'discount_percent',
+  'customer_ref',
+  'limit',
+] as const;
+
+function safeArguments(input: Record<string, unknown>): Record<string, unknown> {
+  const safe: Record<string, unknown> = {};
+  for (const key of LOGGABLE_ARGUMENT_KEYS) {
+    const value = input?.[key];
+    if (value === undefined || value === null || value === '') continue;
+    if (typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') {
+      safe[key] = value;
+    }
+  }
+  return safe;
+}
+
+/**
  * Executes one tool on the seller agent's behalf. Every provider routes through
  * this, so a refusal, a failure, and an audit entry look the same on all of them.
  */
@@ -123,7 +150,7 @@ async function executeTool(
       action: call.name,
       result: 'failed',
       reasoning: `The seller agent called ${call.name} and it failed: ${message}`,
-      details: { input: call.input },
+      details: { tool_name: call.name, ...safeArguments(call.input) },
     });
     return { ok: false, content: message };
   }
