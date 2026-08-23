@@ -6,7 +6,7 @@
 
 **Turn your store's existing APIs into an AI seller agent.**
 
-Any AI agent — Claude, ChatGPT, Gemini — can browse your catalog, negotiate, and buy. Within your limits. Fully audited. On your own infrastructure.
+Any AI agent — Claude, ChatGPT, Gemini — can browse your catalog, negotiate, and buy. Within your limits. Fully audited.
 
 <br>
 
@@ -19,6 +19,19 @@ Any AI agent — Claude, ChatGPT, Gemini — can browse your catalog, negotiate,
 </div>
 
 ---
+
+## Where your data lives
+
+| | |
+|---|---|
+| **Your API keys** | Never leave your environment. No Razorpay key, API key or token is ever written to Parley's database — enforced by a scrubber on every write and asserted by the schema's own verification query. |
+| **Your catalog & orders** | Stay in your store. Parley reads them live and writes orders through your own API. |
+| **Audit trail & mandates** | Shared database by default, isolated per merchant. Only order records, mandate caps and spend totals, amounts, timestamps and the agent's reasoning. |
+| **Customer data** | A customer reference (typically an email) is stored against orders and mandates. Customer names are not stored. |
+
+Isolation is enforced twice: every query filters on a merchant id, and Row Level Security applies the same filter in the database against a role that cannot bypass it.
+
+**Want full control?** Point `PARLEY_DB_URL` at your own Postgres and run [`supabase/0001_shared_schema.sql`](supabase/0001_shared_schema.sql) against it. Nothing else changes.
 
 ## Architecture
 
@@ -160,11 +173,17 @@ Then set `PRICE_UNIT` to match your API:
 
 ### 3 · Add a database
 
-Any Postgres. Free [Supabase](https://supabase.com) or [Neon](https://neon.tech) works. Tables are created automatically.
+Any Postgres. Free [Supabase](https://supabase.com) or [Neon](https://neon.tech) works.
+
+Run [`supabase/0001_shared_schema.sql`](supabase/0001_shared_schema.sql) against it — it creates the tables, a `parley_app` role, and the row-level isolation policies. Every row of its verification query must read PASS.
 
 ```bash
-PARLEY_DB_URL=postgresql://user:pass@host:5432/db?sslmode=require
+PARLEY_DB_URL=postgresql://parley_app:pass@host:5432/db?sslmode=require
 ```
+
+> Connect as `parley_app`, not as a superuser. A superuser bypasses row-level security, which silently removes the isolation layer.
+>
+> On Supabase, use the **pooler** connection string (Project Settings → Database → Connection pooling). The direct `db.<ref>.supabase.co` host is IPv6-only and will not resolve on most IPv4 networks.
 
 ### 4 · Add payment keys
 

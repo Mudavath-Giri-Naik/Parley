@@ -81,8 +81,11 @@ export default async function Home() {
       </div>
 
       <p className="foot">
-        Parley is a self-hosted template. This instance, its API keys, and its data belong to the
-        merchant who deployed it.
+        Parley is a self-hosted template. This instance and its API keys belong to the merchant who
+        deployed it, and no merchant credential is ever written to Parley&apos;s database. The audit
+        trail and spend mandates are stored on shared infrastructure by default, isolated per
+        merchant and holding only order and mandate records; point <code>PARLEY_DB_URL</code> at your
+        own Postgres to keep that data entirely under your control.
       </p>
     </main>
   );
