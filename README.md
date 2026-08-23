@@ -228,6 +228,25 @@ It is written for the merchant, not for a developer. If you can read this page a
 8. **Try something that's out of stock.** You should get an honest refusal, a suggested alternative, and a `blocked` row in the dashboard.
 9. **Read `/dashboard`.** Every step above should be there, in order, in plain language.
 
+## Testing a deployment
+
+```bash
+npm run test:regression                                    # against localhost:3000
+PARLEY_MCP_URL=https://your-deployment/api/mcp npm run test:regression
+```
+
+The suite drives a live deployment through its own MCP endpoint and checks the answers
+against the merchant's raw API: field mapping, price normalization, live stock, the
+discount ceiling, mandate create/spend/over-cap fallback, and audit reasoning. It
+discovers its own fixtures from the configured catalog, so it works for any merchant;
+pin them with `REGRESSION_PRODUCT_ID` and `REGRESSION_SOLDOUT_ID` if you prefer, which
+you will need if your catalog hides sold-out products from its default listing.
+
+Six further checks cover merchant refusal and outage handling. They need a second
+Parley instance pointed at a stub that returns those responses, named by
+`PARLEY_STUB_MCP_URL` and `PARLEY_OUTAGE_MCP_URL`; without them those checks are
+skipped rather than failed.
+
 ## Verifying it's still a template
 
 Parley has exactly one hard architectural rule: **no merchant-specific value appears anywhere in the source.** There's a check for that:

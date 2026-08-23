@@ -9,7 +9,8 @@
     "start": "next start",
     "lint": "next lint",
     "typecheck": "tsc --noEmit",
-    "check:template": "node scripts/check-template-purity.mjs"
+    "check:template": "node scripts/check-template-purity.mjs",
+    "test:regression": "node scripts/regression.mjs"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.120.0",
