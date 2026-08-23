@@ -195,10 +195,20 @@ function rawStock(record) {
   return typeof value === 'number' ? value : Number.isFinite(Number(value)) ? Number(value) : null;
 }
 
-const rawInStock =
-  rawCatalog.find((p) => process.env.REGRESSION_PRODUCT_ID
-    ? String(rawField(p, ['id', 'product_id', 'sku', 'slug', '_id'])) === process.env.REGRESSION_PRODUCT_ID
-    : (rawStock(p) ?? 1) > 0);
+/**
+ * The fixture is ordered several times over the course of the suite, and the mandate
+ * section needs a quantity big enough to overshoot the cap while still being genuinely
+ * in stock. So prefer the deepest-stocked product rather than the first one with any
+ * stock at all. A catalog that reports no stock figures still falls back to the first
+ * product listed, as before.
+ */
+const rawInStock = process.env.REGRESSION_PRODUCT_ID
+  ? rawCatalog.find(
+      (p) => String(rawField(p, ['id', 'product_id', 'sku', 'slug', '_id'])) === process.env.REGRESSION_PRODUCT_ID,
+    )
+  : rawCatalog
+      .filter((p) => (rawStock(p) ?? 1) > 0)
+      .sort((a, b) => (rawStock(b) ?? 1) - (rawStock(a) ?? 1))[0];
 
 /**
  * Many catalogs hide sold-out products from the default listing, so a pinned
@@ -235,7 +245,7 @@ const PRODUCT_NAME = rawField(rawInStock, ['name', 'title', 'product_name', 'lab
 const PRODUCT_PRICE_MINOR = toMinor(rawField(rawInStock, ['price', 'cost', 'amount', 'unit_price', 'mrp']));
 const SOLDOUT_ID = rawSoldOut ? String(rawField(rawSoldOut, ['id', 'product_id', 'sku', 'slug', '_id'])) : null;
 
-console.log(`${DIM}  fixture  : ${PRODUCT_NAME} (${PRODUCT_ID}) at ${PRODUCT_PRICE_MINOR} minor units`);
+console.log(`${DIM}  fixture  : ${PRODUCT_NAME} (${PRODUCT_ID}) at ${PRODUCT_PRICE_MINOR} minor units, stock ${rawStock(rawInStock) ?? "not reported"}`);
 console.log(`  sold out : ${SOLDOUT_ID ?? 'none in this catalog'}${RESET}`);
 
 const buyer = `regression-${Date.now()}@example.com`;
@@ -368,16 +378,59 @@ check('a purchase inside the cap completes', underCap.outcome === 'completed', `
 check('a mandated purchase needs no human', underCap.requires_human_approval === false);
 check('the cap is decremented by the amount charged', underCap.mandate?.remaining_minor === capMinor - PRODUCT_PRICE_MINOR, `expected ${capMinor - PRODUCT_PRICE_MINOR}, got ${underCap.mandate?.remaining_minor}`);
 
-const overCap = await call('create_order_and_pay', {
-  product_id: PRODUCT_ID,
-  customer_name: 'Regression Buyer',
-  customer_email: mandateRef,
-  customer_ref: mandateRef,
-  use_mandate: true,
-  quantity: 50,
-});
-check('a purchase over the cap falls back to approval', overCap.requires_human_approval === true, `got ${overCap.outcome}`);
-check('a purchase over the cap does not complete silently', overCap.outcome !== 'completed');
+/**
+ * The over-cap order has to be refused by the mandate, not by the warehouse.
+ * Ordering an arbitrarily large quantity gets rejected for lack of stock long before
+ * the cap is ever consulted, which reads as a passing stock test and a failing mandate
+ * test while proving nothing about either. So the quantity here is the smallest one
+ * that overshoots what is left on the cap, and it is only attempted if the live
+ * catalog can actually supply it.
+ */
+const remainingMinor = underCap.mandate?.remaining_minor ?? capMinor - PRODUCT_PRICE_MINOR;
+const overCapQuantity = Math.floor(remainingMinor / PRODUCT_PRICE_MINOR) + 1;
+const liveStock = (await call('check_stock', { product_id: PRODUCT_ID })).stock;
+const stockCoversOvercap = typeof liveStock !== 'number' || liveStock >= overCapQuantity;
+console.log(
+  `${DIM}  over-cap : ordering ${overCapQuantity} x ${PRODUCT_PRICE_MINOR} against ${remainingMinor} left on the cap, live stock ${liveStock}${RESET}`,
+);
+
+if (!stockCoversOvercap) {
+  // Not a pass. The catalog cannot express the scenario, and the output says so.
+  const why =
+    `needs ${overCapQuantity} units to overshoot the ${remainingMinor} minor units left on the cap, ` +
+    `but only ${liveStock} are in stock`;
+  skip('the over-cap order clears the stock check', why);
+  skip('a purchase over the cap falls back to approval', why);
+  skip('a purchase over the cap does not complete silently', why);
+  skip('the over-cap order hands the customer a payment link', why);
+} else {
+  const overCap = await call('create_order_and_pay', {
+    product_id: PRODUCT_ID,
+    customer_name: 'Regression Buyer',
+    customer_email: mandateRef,
+    customer_ref: mandateRef,
+    use_mandate: true,
+    quantity: overCapQuantity,
+  });
+
+  // Guards the three below: if the order never cleared stock, they test nothing.
+  check(
+    'the over-cap order clears the stock check',
+    overCap.outcome !== 'blocked',
+    `blocked before the cap was consulted: ${overCap.message ?? ''}`,
+  );
+  check(
+    'a purchase over the cap falls back to approval',
+    overCap.requires_human_approval === true && overCap.outcome === 'awaiting_approval',
+    `expected awaiting_approval, got ${overCap.outcome}`,
+  );
+  check('a purchase over the cap does not complete silently', overCap.outcome !== 'completed');
+  check(
+    'the over-cap order hands the customer a payment link',
+    typeof overCap.payment_link === 'string' && overCap.payment_link.length > 0,
+    `got ${overCap.payment_link}`,
+  );
+}
 
 const afterSpend = await call('check_mandate', { customer_ref: mandateRef });
 check('the mandate records only the permitted spend', afterSpend.spent_minor === PRODUCT_PRICE_MINOR, `expected ${PRODUCT_PRICE_MINOR}, got ${afterSpend.spent_minor}`);
