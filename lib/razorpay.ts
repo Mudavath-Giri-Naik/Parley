@@ -37,6 +37,32 @@ export interface CreatePaymentLinkInput {
   notes?: Record<string, string>;
 }
 
+/** Razorpay rejects a reference_id longer than this. */
+const MAX_REFERENCE_LENGTH = 40;
+
+/**
+ * Builds a reference the payment provider will accept.
+ *
+ * The merchant's order id is whatever their system produces, and a UUID plus a
+ * timestamp overruns the limit — so the length is enforced here, in the adapter
+ * that knows the provider's rules, rather than trusted to every caller.
+ *
+ * The tail is a base-36 timestamp so a retried order gets a fresh reference: the
+ * provider rejects a duplicate, and an order that failed once must still be payable.
+ * The order id keeps the leading characters, which is what makes a payment
+ * recognisable when reconciling against the merchant's own records.
+ */
+export function buildReferenceId(orderId?: string): string | undefined {
+  if (!orderId) return undefined;
+
+  const suffix = Date.now().toString(36);
+  const safeOrderId = orderId.replace(/[^A-Za-z0-9._-]/g, '');
+  const room = MAX_REFERENCE_LENGTH - suffix.length - 1;
+
+  if (room <= 0) return suffix.slice(0, MAX_REFERENCE_LENGTH);
+  return `${safeOrderId.slice(0, room)}-${suffix}`;
+}
+
 export async function createPaymentLink(input: CreatePaymentLinkInput): Promise<PaymentLink> {
   if (!config.payments.enabled) {
     throw new PaymentError(
@@ -65,7 +91,8 @@ export async function createPaymentLink(input: CreatePaymentLinkInput): Promise<
       ...(input.notes ?? {}),
     },
   };
-  if (input.referenceId) body.reference_id = input.referenceId;
+  const reference = buildReferenceId(input.referenceId);
+  if (reference) body.reference_id = reference;
   if (config.payments.callbackUrl) {
     body.callback_url = config.payments.callbackUrl;
     body.callback_method = 'get';

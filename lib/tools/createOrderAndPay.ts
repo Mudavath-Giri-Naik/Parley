@@ -418,7 +418,8 @@ export async function createOrderAndPay(args: CreateOrderArgs): Promise<OrderRes
       description: `${quantity} x ${product.name} from ${config.merchant.name}`,
       customerName: args.customer_name,
       customerEmail: args.customer_email,
-      referenceId: orderId ? `${orderId}-${Date.now()}` : undefined,
+      // Passed raw: the payment adapter owns the provider's length and charset rules.
+      referenceId: orderId,
       notes: { product_id: product.id, customer_ref: customerRef },
     });
 
