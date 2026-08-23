@@ -240,8 +240,74 @@ export function normalizeProduct(record: Record<string, unknown>): NormalizedPro
   };
 }
 
+/** A 5xx is the merchant's infrastructure failing, not the merchant answering. */
+export function isMerchantOutage(status: number): boolean {
+  return status >= 500 && status <= 599;
+}
+
+/** Values that actually carry an error, as opposed to an empty or absent one. */
+function hasMeaningfulValue(value: unknown): boolean {
+  if (value === undefined || value === null || value === false) return false;
+  if (typeof value === 'string') return value.trim() !== '';
+  if (Array.isArray(value)) return value.length > 0;
+  if (typeof value === 'object') return Object.keys(value as object).length > 0;
+  if (typeof value === 'number') return value !== 0;
+  return Boolean(value);
+}
+
+export interface BodyRejection {
+  rejected: boolean;
+  /** Which field gave it away, for the audit trail. */
+  field?: string;
+  reason?: string;
+}
+
+/**
+ * Detects a refusal expressed in the response body rather than in the status code.
+ *
+ * A great many APIs answer "no" with HTTP 200 and `{"ok": false}` or an `error`
+ * field. Trusting the status code alone would let Parley take payment for an order
+ * the merchant never accepted, so the body gets a vote. Which fields carry that
+ * vote is configurable, because the convention is not universal.
+ */
+export function findBodyRejection(payload: unknown): BodyRejection {
+  if (!isRecord(payload)) return { rejected: false };
+
+  // An explicit success flag set to false is an unambiguous refusal.
+  for (const field of config.merchant.orderSuccessFields) {
+    const value = payload[field];
+    if (value === false || value === 'false' || value === 0) {
+      return {
+        rejected: true,
+        field,
+        reason: `the merchant returned ${field}=${String(value)}`,
+      };
+    }
+  }
+
+  // An error field carrying real content is likewise a refusal. `error: null`,
+  // `error: ""` and `errors: []` all mean "no error", so they are not.
+  for (const field of config.merchant.orderErrorFields) {
+    const value = payload[field];
+    if (hasMeaningfulValue(value)) {
+      const detail =
+        typeof value === 'string'
+          ? value.trim()
+          : isRecord(value) && typeof value.message === 'string'
+            ? value.message
+            : JSON.stringify(value).slice(0, 200);
+      return { rejected: true, field, reason: detail };
+    }
+  }
+
+  return { rejected: false };
+}
+
 /** True when a merchant response looks like an out-of-stock refusal rather than an outage. */
 export function looksOutOfStock(status: number, payload: unknown, raw: string): boolean {
+  // A server error carries no stock decision. Keyword-matching its body is how
+  // "503 Service Unavailable" used to be reported to customers as "sold out".
+  if (isMerchantOutage(status)) return false;
   if (status === 409 || status === 410) return true;
   if (config.merchant.outOfStockPattern.test(raw)) return true;
   if (isRecord(payload)) {

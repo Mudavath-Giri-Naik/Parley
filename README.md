@@ -121,7 +121,9 @@ Without `PARLEY_DB_URL`, Parley still runs: decisions go to the server log, and 
 |---|---|---|
 | `PRICE_UNIT` | `major` | Does your API report `1499` as ₹1,499 (`major`) or as ₹14.99 (`minor`)? **Getting this wrong misprices every order.** |
 | `FIELD_MAP` | *(unset)* | Only needed when your field names differ and aren't already recognized: `{"name":"title","price":"cost","stock":"qty"}`. Keys are Parley's names, values are yours. Valid keys: `id`, `name`, `price`, `stock`, `currency`, `description`, `image`, `url`, `size`, `color`. |
-| `OUT_OF_STOCK_PATTERN` | common phrasings | Regex identifying your API's out-of-stock refusal, so Parley can tell "sold out" apart from "server on fire". |
+| `OUT_OF_STOCK_PATTERN` | common phrasings | Regex identifying your API's out-of-stock refusal. Applied only to 2xx/4xx replies: a 5xx is always an outage, never "sold out". |
+| `ORDER_SUCCESS_FIELDS` | `ok,success,succeeded,is_success,isSuccess` | Body fields that mean "accepted". Any of them set to `false` refuses the order, even on HTTP 200. |
+| `ORDER_ERROR_FIELDS` | `error,errors,error_code,…` | Body fields that carry a refusal. Content in any of them refuses the order; empty values (`null`, `""`, `[]`) do not. |
 | `MERCHANT_ORDER_STATUS_API` | `MERCHANT_ORDER_API` | `GET` one order's status, if it lives at a different URL. |
 | `MERCHANT_API_KEY` / `MERCHANT_API_KEY_HEADER` | *(unset)* / `Authorization` | Sent on every call to your APIs, if they need auth. |
 | `MERCHANT_API_TIMEOUT_MS` | `15000` | How long to wait on your APIs before giving up. |

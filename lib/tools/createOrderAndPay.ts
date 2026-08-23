@@ -2,6 +2,8 @@ import { auditLog } from '../auditLog';
 import { config } from '../config';
 import {
   callMerchant,
+  findBodyRejection,
+  isMerchantOutage,
   isRecord,
   looksOutOfStock,
   merchantMessage,
@@ -35,7 +37,13 @@ import {
  *   6. Log every outcome, including the ones that fail.
  */
 
-export type OrderOutcome = 'completed' | 'awaiting_approval' | 'blocked' | 'failed';
+export type OrderOutcome =
+  | 'completed'
+  | 'awaiting_approval'
+  | 'blocked'
+  | 'failed'
+  /** The merchant's own systems errored; no decision about the product was returned. */
+  | 'unavailable';
 
 export interface OrderResult {
   outcome: OrderOutcome;
@@ -187,10 +195,53 @@ export async function createOrderAndPay(args: CreateOrderArgs): Promise<OrderRes
     };
   }
 
-  // The graceful failure case: a refusal for lack of stock is a normal answer, not a crash.
-  if (!orderResponse.ok || looksOutOfStock(orderResponse.status, orderResponse.data, orderResponse.raw)) {
-    const outOfStock = looksOutOfStock(orderResponse.status, orderResponse.data, orderResponse.raw);
+  // A 5xx means the merchant's systems failed, which is not an answer about this
+  // product. Reporting it as "sold out" would be a lie about the customer's item.
+  if (isMerchantOutage(orderResponse.status)) {
     const detail = merchantMessage(orderResponse.data, orderResponse.raw);
+    await auditLog({
+      actor: 'seller_agent',
+      action: 'merchant_unavailable',
+      result: 'failed',
+      reasoning:
+        `The order for "${product.name}" could not be placed because the store's own systems returned a server error ` +
+        `(HTTP ${orderResponse.status}: ${detail}). This is an outage, not a stock decision: the item may well be available. ` +
+        'Nothing was charged and no payment was requested.',
+      customerRef,
+      amountMinor,
+      currency,
+      details: { product_id: product.id, quantity, merchant_status: orderResponse.status },
+    });
+    return {
+      outcome: 'unavailable',
+      product: { id: product.id, name: product.name },
+      quantity,
+      list_price_minor: listPriceMinor,
+      amount_minor: amountMinor,
+      discount_percent: discountPercent,
+      discount_applied: discountPercent > 0,
+      currency,
+      amount_display: formatMoney(amountMinor, currency),
+      requires_human_approval: false,
+      message:
+        `This store's system is temporarily unavailable, so the order could not be placed and nothing was charged. ` +
+        `"${product.name}" has not been reported as out of stock.`,
+      suggestion:
+        'Tell the customer the store is having temporary technical trouble and offer to try again shortly. Do not tell them the item is sold out: that is not what happened.',
+    };
+  }
+
+  // The graceful failure case: a refusal for lack of stock is a normal answer, not a crash.
+  const bodyRejection = findBodyRejection(orderResponse.data);
+  if (
+    !orderResponse.ok ||
+    bodyRejection.rejected ||
+    looksOutOfStock(orderResponse.status, orderResponse.data, orderResponse.raw)
+  ) {
+    const outOfStock = looksOutOfStock(orderResponse.status, orderResponse.data, orderResponse.raw);
+    const detail = bodyRejection.rejected
+      ? (bodyRejection.reason ?? merchantMessage(orderResponse.data, orderResponse.raw))
+      : merchantMessage(orderResponse.data, orderResponse.raw);
 
     if (outOfStock) {
       await auditLog({
@@ -226,11 +277,18 @@ export async function createOrderAndPay(args: CreateOrderArgs): Promise<OrderRes
       actor: 'seller_agent',
       action: 'create_order_and_pay',
       result: 'failed',
-      reasoning: `The order for "${product.name}" was rejected by the store (HTTP ${orderResponse.status}): ${detail}. Nothing was charged.`,
+      reasoning: bodyRejection.rejected
+        ? `The order for "${product.name}" was refused by the store. It answered HTTP ${orderResponse.status}, but the response body carried a rejection in "${bodyRejection.field}": ${detail}. No payment was requested and nothing was charged.`
+        : `The order for "${product.name}" was rejected by the store (HTTP ${orderResponse.status}): ${detail}. Nothing was charged.`,
       customerRef,
       amountMinor,
       currency,
-      details: { product_id: product.id, quantity, merchant_status: orderResponse.status },
+      details: {
+        product_id: product.id,
+        quantity,
+        merchant_status: orderResponse.status,
+        ...(bodyRejection.rejected ? { rejection_field: bodyRejection.field } : {}),
+      },
     });
     return {
       outcome: 'failed',

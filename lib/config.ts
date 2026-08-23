@@ -44,6 +44,8 @@ export interface ParleyConfig {
     priceUnit: PriceUnit;
     currency: string;
     outOfStockPattern: RegExp;
+    orderSuccessFields: string[];
+    orderErrorFields: string[];
   };
   agent: {
     persona: string;
@@ -165,6 +167,20 @@ function parsePriceUnit(): PriceUnit {
   return raw;
 }
 
+/** Comma-separated list of field names, trimmed and de-duplicated. */
+function parseFieldList(key: string, fallback: string): string[] {
+  const raw = optional(key, fallback);
+  const names = raw
+    .split(',')
+    .map((name) => name.trim())
+    .filter(Boolean);
+  if (!names.length) {
+    issues.push(`${key} must list at least one field name, or be left unset.`);
+    return fallback.split(',');
+  }
+  return [...new Set(names)];
+}
+
 function parseAgentProvider(): AgentProviderChoice {
   const raw = optional('AGENT_PROVIDER', 'auto').toLowerCase();
   if (raw !== 'auto' && raw !== 'anthropic' && raw !== 'gemini') {
@@ -213,6 +229,16 @@ export const config: ParleyConfig = {
     priceUnit: parsePriceUnit(),
     currency: optional('CURRENCY', 'INR').toUpperCase(),
     outOfStockPattern: parseOutOfStockPattern(),
+    // Plenty of APIs answer "no" with HTTP 200 and a flag in the body. These name
+    // the fields that carry that answer, because the convention varies by merchant.
+    orderSuccessFields: parseFieldList(
+      'ORDER_SUCCESS_FIELDS',
+      'ok,success,succeeded,is_success,isSuccess',
+    ),
+    orderErrorFields: parseFieldList(
+      'ORDER_ERROR_FIELDS',
+      'error,errors,error_code,errorCode,error_message,errorMessage,failure,fault',
+    ),
   },
   agent: {
     persona: optional('AGENT_PERSONA', 'Friendly, concise, never pushy'),
