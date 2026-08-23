@@ -5,55 +5,29 @@
 <h3>Turn your store's existing APIs into an AI seller agent.</h3>
 
 <p>
-  <b>Browse &nbsp;·&nbsp; Negotiate &nbsp;·&nbsp; Buy</b><br>
-  Any AI agent can transact with your storefront — within limits <b>you enforce in code</b>,<br>
-  with <b>every decision audited</b>. No replatforming. No SDK for your customers.
-</p>
-
-<br>
-
-<sub><b>W O R K S &nbsp; W I T H</b></sub>
-
-<p>
-  <img alt="Claude" src="https://img.shields.io/badge/Claude-D97757?style=for-the-badge&logo=anthropic&logoColor=white">
-  <img alt="ChatGPT" src="https://img.shields.io/badge/ChatGPT-412991?style=for-the-badge">
-  <img alt="Gemini" src="https://img.shields.io/badge/Gemini-8E75B2?style=for-the-badge&logo=googlegemini&logoColor=white">
-  <img alt="Any MCP client" src="https://img.shields.io/badge/any_MCP_client-6EA8FE?style=for-the-badge&logo=modelcontextprotocol&logoColor=0B0F16">
-</p>
-
-<sub><b>B U I L T &nbsp; W I T H</b></sub>
-
-<p>
-  <img alt="Next.js 15" src="https://img.shields.io/badge/Next.js_15-0B0F16?style=for-the-badge&logo=nextdotjs&logoColor=white">
-  <img alt="TypeScript" src="https://img.shields.io/badge/TypeScript-3178C6?style=for-the-badge&logo=typescript&logoColor=white">
-  <img alt="PostgreSQL" src="https://img.shields.io/badge/Postgres-4169E1?style=for-the-badge&logo=postgresql&logoColor=white">
-  <img alt="Razorpay" src="https://img.shields.io/badge/Razorpay-0C2451?style=for-the-badge&logo=razorpay&logoColor=white">
-  <img alt="Vercel" src="https://img.shields.io/badge/Vercel-000000?style=for-the-badge&logo=vercel&logoColor=white">
+  <b>Browse · Negotiate · Buy.</b> Agentic commerce over MCP — with spend mandates, a discount
+  ceiling enforced in code, live stock, and a full audit trail. Self-hosted, on your own Postgres.
 </p>
 
 <p>
-  <code>agentic commerce</code> ·
-  <code>MCP server</code> ·
-  <code>seller agent</code> ·
-  <code>spend mandates</code> ·
-  <code>discount ceiling</code> ·
-  <code>live stock</code> ·
-  <code>audit trail</code> ·
-  <code>self-hosted</code>
+  <img alt="works with" src="https://img.shields.io/badge/works_with-2B3A52?style=flat-square">
+  <img alt="Claude" src="https://img.shields.io/badge/Claude-D97757?style=flat-square&logo=anthropic&logoColor=white">
+  <img alt="ChatGPT" src="https://img.shields.io/badge/ChatGPT-412991?style=flat-square">
+  <img alt="Gemini" src="https://img.shields.io/badge/Gemini-8E75B2?style=flat-square&logo=googlegemini&logoColor=white">
+  <img alt="any MCP client" src="https://img.shields.io/badge/any_MCP_client-6EA8FE?style=flat-square&logo=modelcontextprotocol&logoColor=0B0F16">
+  <br>
+  <img alt="built with" src="https://img.shields.io/badge/built_with-2B3A52?style=flat-square">
+  <img alt="Next.js 15" src="https://img.shields.io/badge/Next.js_15-0B0F16?style=flat-square&logo=nextdotjs&logoColor=white">
+  <img alt="TypeScript" src="https://img.shields.io/badge/TypeScript-3178C6?style=flat-square&logo=typescript&logoColor=white">
+  <img alt="Postgres" src="https://img.shields.io/badge/Postgres-4169E1?style=flat-square&logo=postgresql&logoColor=white">
+  <img alt="Razorpay" src="https://img.shields.io/badge/Razorpay-0C2451?style=flat-square&logo=razorpay&logoColor=white">
+  <img alt="Node 20+" src="https://img.shields.io/badge/Node_%E2%89%A5_20-4ADE80?style=flat-square&logo=nodedotjs&logoColor=white">
+  <img alt="License MIT" src="https://img.shields.io/badge/MIT-4ADE80?style=flat-square">
 </p>
-
-<br>
 
 [![Deploy with Vercel](https://vercel.com/button)](https://vercel.com/new/clone?repository-url=https%3A%2F%2Fgithub.com%2FMudavath-Giri-Naik%2FParley&env=MERCHANT_NAME,MERCHANT_SEARCH_API,MERCHANT_STOCK_API,MERCHANT_ORDER_API,RAZORPAY_KEY_ID,RAZORPAY_KEY_SECRET,PARLEY_DB_URL&envDescription=Point%20Parley%20at%20your%20own%20storefront%20APIs%20and%20payment%20keys&envLink=https%3A%2F%2Fgithub.com%2FMudavath-Giri-Naik%2FParley%2Fblob%2Fmain%2Fdocs%2FCONFIGURATION.md)
 
-<p>
-  <img alt="License MIT" src="https://img.shields.io/badge/license-MIT-4ADE80?style=flat-square">
-  <img alt="Node 20+" src="https://img.shields.io/badge/node-%E2%89%A5_20-4ADE80?style=flat-square&logo=nodedotjs&logoColor=white">
-  <img alt="Self-hosted" src="https://img.shields.io/badge/self--hosted-yes-6EA8FE?style=flat-square">
-  <img alt="Bring your own DB" src="https://img.shields.io/badge/bring_your_own-Postgres-6EA8FE?style=flat-square">
-  <img alt="PRs welcome" src="https://img.shields.io/badge/PRs-welcome-6EA8FE?style=flat-square">
-</p>
-
+<sub>
 <a href="#before-you-start">Before you start</a> ·
 <b><a href="#quickstart">Quickstart</a></b> ·
 <a href="#architecture">Architecture</a> ·
@@ -61,6 +35,7 @@
 <a href="#whats-built-in">Features</a> ·
 <a href="docs/CONFIGURATION.md">Configuration</a> ·
 <a href="docs/LIMITATIONS.md">Limitations</a>
+</sub>
 
 </div>
 
