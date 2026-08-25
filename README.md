@@ -94,6 +94,8 @@ flowchart LR
 
 **Parley never writes to your database.** Every order goes through your own API.
 
+**Where this sits in the 2026 protocol landscape.** Parley is an MCP-based implementation of the emerging agentic-commerce pattern — UCP-style discovery, AP2-style mandates, Razorpay as the settlement layer. The transport layer is the one exact match: Parley speaks MCP, so any MCP client is a first-class buyer agent. Above that, everything is patterned rather than compliant. `search_products`, `get_product_details` and `check_stock` play the role UCP's catalog-and-cart discovery plays, but they answer in Parley's own schema, not a UCP manifest — and the `.well-known/agent-commerce.json` document maps Parley's order vocabulary onto ACP's checkout-session concepts purely as a reading aid for agents that already speak it, which it states rather than claiming compliance. `create_mandate` / `check_mandate` mirrors conceptually what an AP2 mandate does — a bounded, customer-authorized spend cap that lets a purchase complete without a human in the loop — but it is self-issued and enforced as a cap-and-ledger in Postgres, not a W3C Verifiable Credential or a cryptographic proof chain. Settlement is a Razorpay test-mode payment, not a Shared Payment Token. That last one is a deliberate scoping choice: the point is to prove Razorpay's own rails can carry agent-initiated commerce end to end, not to interoperate with Google's or OpenAI's stacks.
+
 ## How a purchase happens
 
 ```mermaid
