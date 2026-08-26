@@ -21,17 +21,38 @@ const SKIP_DIRS = new Set(['node_modules', '.next', '.git', '.vercel', 'out', 's
 const SKIP_FILES = new Set(['README.md', '.env.example', 'package-lock.json', 'LICENSE']);
 const SOURCE_EXTENSIONS = new Set(['.ts', '.tsx', '.js', '.jsx', '.mjs', '.css', '.json']);
 
-/** Hosts that belong to shared infrastructure, not to any one merchant. */
+/**
+ * Hosts that belong to shared infrastructure, not to any one merchant.
+ *
+ * Two kinds of thing live here. Infrastructure a deployment actually talks to
+ * (payment and model APIs), and the standards bodies whose specifications the code
+ * implements. A URL pointing at a protocol specification is the opposite of a
+ * merchant-specific value — it is the same for every merchant, by definition — and
+ * pinning the spec version in the source is how a reader knows which revision the
+ * code was written against.
+ */
 const ALLOWED_HOSTS = [
+  // Infrastructure this codebase calls.
   'api.razorpay.com',
+  'razorpay.com',
   'generativelanguage.googleapis.com',
   'ai.google.dev',
+  'api.openai.com',
+  'api.anthropic.com',
+  'api.perplexity.ai',
   'localhost',
   '127.0.0.1',
   'example.com',
+  // Standards and specifications this codebase implements.
   'schema.org',
   'json-schema.org',
   'modelcontextprotocol.io',
+  'ucp.dev',
+  'agenticcommerce.dev',
+  'github.com',
+  'raw.githubusercontent.com',
+  'sitemaps.org',
+  'datatracker.ietf.org',
   'nextjs.org',
   'vercel.com',
 ];
